@@ -108,6 +108,12 @@ See placeholder code here for help.
 
 ```{r}
 library(tidyverse)
+library(fs)
+
+get_study_files <- function(path="./pitch", studies="123") {
+    pattern <- paste0("Study[", studies, "]")
+    dir_ls(path=path, regexp = pattern)
+}
 
 read_pitch <- function(filename) {
     # load data
