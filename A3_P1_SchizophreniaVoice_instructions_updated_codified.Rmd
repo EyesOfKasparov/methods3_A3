@@ -1,8 +1,10 @@
 ---
 title: "Assignment 3 - Part 1 - Voice In Schizophrenia"
-author: "Riccardo Fusaroli"
-date: "August 09, 2019"
-output: html_document
+author: "The Eyes of Kasparov"
+date: "October 06, 2020"
+output:
+  word_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -189,6 +191,44 @@ filtered_master_data %>%
               mean_SAPS = mean(SAPS), 
               sd_SAPS = sd(SAPS))
 
+plot_df <- master_data %>% 
+  select(Diagnosis, Age, Gender, study_nr) %>% 
+  drop_na()
+
+age_plot <- ggplot(plot_df, aes(x = Diagnosis, y = Age)) +
+  geom_boxplot() + 
+  stat_summary(fun="mean") +
+  facet_grid(~study_nr) + 
+  theme_bw() + 
+  labs(title = "Age distribution", subtitle = "By study and diagnosis")
+age_plot
+
+ggplot(plot_df, aes(y = Gender, fill = Diagnosis)) +
+  geom_bar(position="Dodge") + 
+  facet_grid(cols = vars(study_nr)) + 
+  theme_bw() + 
+  coord_flip() + 
+  labs(title = "Gender distribution", subtitle = "By study and diagnosis")
+
+new_plot_df <- master_data %>% 
+  select(Diagnosis, Age, Gender, study_nr, SANS, SAPS) %>% 
+  drop_na()
+
+SANS_plot <- ggplot(new_plot_df, aes(x = Diagnosis, y = SANS)) +
+  geom_boxplot() + 
+  stat_summary(fun="mean") +
+  facet_grid(~study_nr) + 
+  theme_bw() + 
+  labs(title = "SANS distribution", subtitle = "By study and diagnosis")
+SANS_plot
+
+SAPS_plot <- ggplot(new_plot_df, aes(x = Diagnosis, y = SAPS)) +
+  geom_boxplot() + 
+  stat_summary(fun="mean") +
+  facet_grid(~study_nr) + 
+  theme_bw() + 
+  labs(title = "SAPS distribution", subtitle = "By study and diagnosis")
+SAPS_plot
 
 ```
 
@@ -317,7 +357,7 @@ new_plot_data <- plot_g_data %>%
     pivot_wider(names_from=type, values_from=value)
     
 
-ggplot(data, aes(x=who, y=effect, colour=who)) +
+ggplot(new_plot_data, aes(x=who, y=effect, colour=who)) +
     geom_point() + 
     geom_pointrange(aes(ymin=lower, ymax=upper)) + 
     facet_grid(cols=vars(model_name)) + 
@@ -357,12 +397,28 @@ CV5 <- cross_validate(
   family = 'gaussian', 
 )
 
+CV5
 
-pred_tibble <- CV5$Predictions %>% 
-    as_tibble()
-ggplot(CV5$Predictions[[2]], aes(x=Target, y=Prediction)) +
-    geom_point() + 
-    geom_smooth(method="lm")
+```
+
+### Testing RMSE on training data (BADBADNOTGOOD, but maybe alright)
+```{r}
+
+get_train_rmse <- function(model, outcome_var) {
+  pred_dat <- model %>% 
+    augment %>% 
+    select(outcome_var, .fitted)
+  
+  Metrics::rmse(pred_dat[[outcome_var]], pred_dat[[".fitted"]])
+
+}
+
+
+get_train_rmse(pause_duration_model, "pause_duration")
+get_train_rmse(PST_model, "proportion_spoken")
+get_train_rmse(pitch_variability, "pitch_variability")
+get_train_rmse(speech_rate_model, "speech_rate")
+
 
 ```
 
