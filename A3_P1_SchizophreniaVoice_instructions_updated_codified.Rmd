@@ -130,7 +130,7 @@ read_pitch <- function(filename) {
 
 
 # when you've created a function that works, you can
-pitch_data <- get_study_files(studies="123456") %>% ## NB replace with your path to the files
+pitch_data <- get_study_files(studies="1234") %>% ## NB replace with your path to the files
     purrr::map_df(read_pitch)
 
 summarised_pitch_data <- pitch_data %>% 
@@ -216,7 +216,7 @@ normalize <- function(x) {
 
 model_data <- master_data %>% 
     select(articulation_rate="articulation rate (nsyll / phonationtime)",
-             real_ID, Diagnosis,
+             real_ID, Diagnosis, diagnosis,
              Participant=Participant.x, 
              pitch_variability = freq_iqr,
              npause, 
@@ -227,7 +227,8 @@ model_data <- master_data %>%
     mutate(pause_duration = (duration-spoken_duration) / npause, 
            pause_duration = replace(pause_duration, is.infinite(pause_duration), NA),
            study_nr = as_factor(study_nr), 
-           trial_nr = as_factor(trial_nr)) %>% 
+           trial_nr = as_factor(trial_nr), 
+           proportion_spoken = spoken_duration / duration) %>% 
     # Normalize all numeric columns
     mutate(across(where(is.numeric), normalize)) %>% 
     mutate(trial_nr = as.integer(trial_nr))
@@ -236,9 +237,30 @@ model_data <- master_data %>%
 
 ### Modelling: pitch variability
 ```{r}
-pitch_variability <- lmerTest::lmer(pitch_variability ~ Diagnosis + (1|real_ID) + (1|study_nr/trial_nr), model_data)
+pitch_variability <- lmerTest::lmer(pitch_variability ~ diagnosis + (1|study_nr) + (1|real_ID) + (1|trial_nr), data=model_data)
 
 summary(pitch_variability)
+```
+
+### modeling proportion of spoken time (PST)
+```{r}
+PST_model <- lmerTest::lmer(proportion_spoken ~ diagnosis + (1|study_nr) + (1|real_ID) + (1|trial_nr), control=lme4::lmerControl(optimizer="bobyqa"), data=model_data)
+
+summary(PST_model)
+```
+
+### Speech rate
+```{r}
+speech_rate_model <- lmerTest::lmer(speech_rate ~ diagnosis + (1|study_nr) + (1|real_ID) + (1|trial_nr), control=lme4::lmerControl(optimizer="bobyqa"), data=model_data)
+
+summary(speech_rate_model)
+```
+
+### modelling pause duration
+```{r}
+pause_duration_model <- lmerTest::lmer(pause_duration ~ diagnosis + (1|study_nr) + (1|real_ID) + (1|trial_nr), control=lme4::lmerControl(optimizer="bobyqa"), data=model_data)
+
+summary(pause_duration_model)
 ```
 
 
@@ -249,7 +271,7 @@ library(esc)
 library(broom.mixed)
 library(magrittr)
 
-calc_hedge_g <- function(mmodel, group="Diagnosis") {
+calc_hedge_g <- function(mmodel, group="diagnosis") {
     # Get fixed effects 
     feffects <- mmodel %>% 
         tidy %>% 
@@ -269,12 +291,80 @@ calc_hedge_g <- function(mmodel, group="Diagnosis") {
         mutate(sd_val = std.error * sqrt(total))
     
     final_data %$% 
-        esc_beta(estimate, sd_val, Control, Schizophrenia, es.type = "g")
+        esc_beta(estimate, sd_val, D0, D1, es.type = "g")
 }
 
 calc_hedge_g(pitch_variability)
+calc_hedge_g(PST_model)
+calc_hedge_g(speech_rate_model)
+calc_hedge_g(pause_duration_model)
 ```
 
+
+### Plotting the difference
+```{r fig.height = 5, fig.width=7}
+plot_g_data <- tibble(model_name = c("pitch_variability", "percent duration spoken", "speech_rate_model", "pause_duration"),
+                      our_effect = c(-0.5433, -0.3268, -0.6215, 0.5888), 
+                      our_lower = c(-0.6350, -0.4174, -0.7137,  0.4931), 
+                      our_upper = c(-0.4516, -0.2361, -0.5293, 0.6846),
+                      meta_effect = c(-0.55, -1.26, -0.75, 1.89),
+                      meta_lower = c(-1.06, -2.26, -1.51, 0.72),
+                      meta_upper = c(0.09, 0.25, 0.04, 3.21))
+                      
+new_plot_data <- plot_g_data %>% 
+    pivot_longer(cols = 2:7) %>% 
+    separate(name, c("who", "type")) %>% 
+    pivot_wider(names_from=type, values_from=value)
+    
+
+ggplot(data, aes(x=who, y=effect, colour=who)) +
+    geom_point() + 
+    geom_pointrange(aes(ymin=lower, ymax=upper)) + 
+    facet_grid(cols=vars(model_name)) + 
+    theme_minimal() +
+    labs(title = "Comparison of Hedge's g for meta-analysis and ours", x=NULL, y = "Hedge's g") +
+    theme(legend.position =  "none")
+
+```
+
+## Cross validation
+```{r}
+library(groupdata2) # Shout out to Ludvig Olsen
+library(cvms) # Even more shout out to Ludvig Olsen! 
+
+fold_model_data <- model_data %>% 
+    mutate(real_ID = as_factor(real_ID)) %>% 
+    fold(
+      data = ., k = 10,
+      cat_col = 'diagnosis',
+      id_col = 'real_ID',
+      num_fold_cols = 3,
+      handle_existing_fold_cols = "keep"
+    )
+
+
+mixed_model_formulas <- c("speech_rate ~ diagnosis + (1|study_nr) + (1|real_ID) + (1|trial_nr)", 
+                          "pitch_variability ~ diagnosis + (1|study_nr) + (1|real_ID) + (1|trial_nr)", 
+                          "pause_duration ~ diagnosis + (1|study_nr) + (1|real_ID) + (1|trial_nr)", 
+                          "proportion_spoken ~ diagnosis + (1|study_nr) + (1|real_ID) + (1|trial_nr)")
+
+
+CV5 <- cross_validate(
+  data = fold_model_data,
+  formulas = mixed_model_formulas,
+  control = lme4::lmerControl(optimizer="bobyqa"), 
+  fold_cols = paste0(".folds_", 1:3),
+  family = 'gaussian', 
+)
+
+
+pred_tibble <- CV5$Predictions %>% 
+    as_tibble()
+ggplot(CV5$Predictions[[2]], aes(x=Target, y=Prediction)) +
+    geom_point() + 
+    geom_smooth(method="lm")
+
+```
 
 #### N.B. Remember to save the acoustic features of voice in a separate file, so to be able to load them next time
 
